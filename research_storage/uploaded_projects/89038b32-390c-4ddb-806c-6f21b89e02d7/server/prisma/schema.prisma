@@ -1,0 +1,341 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  CASHIER
+  MANAGER
+}
+
+enum NotificationCategory {
+  LOW_STOCK
+  SALE
+  CUSTOMER
+}
+
+enum NotificationPriority {
+  HIGH
+  NORMAL
+  LOW
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  EXPIRED
+}
+
+enum PaymentMethod {
+  UPI
+}
+
+enum SalePaymentStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
+enum PaymentVerificationAction {
+  UTR_SUBMITTED
+  APPROVED
+  REJECTED
+  SOUNDBOX_CONFIRMED
+}
+
+model User {
+  id                      Int                      @id @default(autoincrement())
+  name                    String
+  email                   String                   @unique
+  password                String
+  role                    Role                     @default(ADMIN)
+  isBlocked               Boolean                  @default(false)
+  isOnline                Boolean                  @default(false)
+  lastSeenAt              DateTime?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  notifications           Notification[]
+  salesAsCashier          Sale[]                   @relation("SaleCashier")
+  merchantId              Int
+  merchant                Merchant                 @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  verifiedPayments        Payment[]                @relation("PaymentVerifier")
+  paymentVerificationLogs PaymentVerificationLog[] @relation("PaymentLogActor")
+  processedReturns        SaleReturn[]             @relation("SaleReturnProcessor")
+
+  @@unique([id, merchantId])
+}
+
+model Product {
+  id            Int      @id @default(autoincrement())
+  name          String
+  barcode       String   @unique
+  category      String
+  purchasePrice Float
+  sellingPrice  Float
+  stock         Int
+  createdAt     DateTime @default(now())
+
+  saleItems SaleItem[]
+  exchangeItems SaleExchangeItem[]
+}
+
+model Sale {
+  id Int @id @default(autoincrement())
+
+  total          Float
+  subtotal       Float   @default(0)
+  taxAmount      Float   @default(0)
+  taxRate        Float   @default(0)
+  discountAmount Float   @default(0)
+  discountRate   Float   @default(0)
+  roundingAmount Float   @default(0)
+  invoiceNumber  String?
+  currency       String  @default("INR")
+
+  paymentMethod String            @default("Cash")
+  paymentStatus SalePaymentStatus @default(PAID)
+
+  cashReceived Float?
+
+  createdAt DateTime @default(now())
+
+  items SaleItem[]
+
+  customerId Int?
+  cashierId  Int?
+  merchantId Int
+  merchant   Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+
+  customer Customer? @relation(fields: [customerId], references: [id])
+  cashier  User?     @relation("SaleCashier", fields: [cashierId], references: [id], onDelete: SetNull)
+  payments Payment[]
+  returns  SaleReturn[]
+
+  @@unique([id, merchantId])
+  @@index([merchantId, createdAt])
+  @@index([merchantId, paymentStatus])
+}
+
+model Merchant {
+  id              Int                      @id @default(autoincrement())
+  name            String
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  users           User[]
+  sales           Sale[]
+  paymentSettings MerchantPaymentSettings?
+  payments        Payment[]
+  returns         SaleReturn[]
+}
+
+model MerchantPaymentSettings {
+  id                  Int      @id @default(autoincrement())
+  merchantId          Int      @unique
+  businessName        String
+  upiId               String
+  upiDisplayName      String
+  accountHolderName   String
+  accountNumber       String
+  ifscCode            String
+  bankName            String
+  paymentInstructions String   @default("")
+  enabled             Boolean  @default(false)
+  qrExpirationMinutes Int      @default(10)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+}
+
+model Payment {
+  id                   Int           @id @default(autoincrement())
+  merchantId           Int
+  saleId               Int
+  amount               Decimal       @db.Decimal(12, 2)
+  currency             String        @default("INR")
+  paymentMethod        PaymentMethod @default(UPI)
+  transactionReference String        @unique
+  paymentUri           String
+  merchantUpiId        String
+  merchantBusinessName String
+  merchantDisplayName  String
+  paymentInstructions  String
+  idempotencyKey       String?       @unique
+  utrNumber            String?
+  status               PaymentStatus @default(PENDING)
+  expiresAt            DateTime
+  verifiedAmount       Decimal?      @db.Decimal(12, 2)
+  verifiedAt           DateTime?
+  verifiedBy           Int?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  merchant         Merchant                 @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  sale             Sale                     @relation(fields: [saleId, merchantId], references: [id, merchantId], onDelete: Restrict)
+  verifier         User?                    @relation("PaymentVerifier", fields: [verifiedBy, merchantId], references: [id, merchantId], onDelete: Restrict)
+  verificationLogs PaymentVerificationLog[]
+
+  @@unique([id, merchantId])
+  @@index([merchantId, status, createdAt])
+  @@index([merchantId, saleId])
+  @@index([merchantId, utrNumber])
+}
+
+model PaymentVerificationLog {
+  id         Int                       @id @default(autoincrement())
+  paymentId  Int
+  merchantId Int
+  actorId    Int
+  action     PaymentVerificationAction
+  utrNumber  String?
+  amount     Decimal?                  @db.Decimal(12, 2)
+  notes      String?
+  createdAt  DateTime                  @default(now())
+
+  payment Payment @relation(fields: [paymentId, merchantId], references: [id, merchantId], onDelete: Restrict)
+  actor   User    @relation("PaymentLogActor", fields: [actorId, merchantId], references: [id, merchantId], onDelete: Restrict)
+
+  @@index([paymentId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+model Notification {
+  id          Int                  @id @default(autoincrement())
+  userId      Int
+  category    NotificationCategory
+  priority    NotificationPriority @default(NORMAL)
+  title       String
+  message     String
+  relatedType String?
+  relatedId   Int?
+  dedupeKey   String?              @unique
+  createdAt   DateTime             @default(now())
+  readAt      DateTime?
+  archivedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, archivedAt, createdAt])
+  @@index([userId, readAt])
+}
+
+model SaleItem {
+  id Int @id @default(autoincrement())
+
+  saleId    Int
+  productId Int
+
+  quantity Int
+  price    Float
+
+  sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+  returnItems SaleReturnItem[]
+}
+
+model SaleReturn {
+  id            Int      @id @default(autoincrement())
+  saleId        Int
+  merchantId    Int
+  processedById Int
+  total           Decimal  @db.Decimal(12, 2)
+  replacementTotal Decimal @default(0) @db.Decimal(12, 2)
+  settlementAmount Decimal @default(0) @db.Decimal(12, 2)
+  paymentMethod    String?
+  createdAt        DateTime @default(now())
+
+  sale        Sale             @relation(fields: [saleId, merchantId], references: [id, merchantId], onDelete: Restrict)
+  merchant    Merchant         @relation(fields: [merchantId], references: [id], onDelete: Restrict)
+  processedBy User             @relation("SaleReturnProcessor", fields: [processedById, merchantId], references: [id, merchantId], onDelete: Restrict)
+  items        SaleReturnItem[]
+  exchangeItems SaleExchangeItem[]
+
+  @@index([saleId, createdAt])
+  @@index([merchantId, createdAt])
+}
+
+model SaleReturnItem {
+  id             Int     @id @default(autoincrement())
+  returnId       Int
+  saleItemId     Int
+  quantity       Int
+  refundAmount Decimal     @db.Decimal(12, 2)
+
+  saleReturn SaleReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  saleItem   SaleItem   @relation(fields: [saleItemId], references: [id], onDelete: Restrict)
+
+  @@unique([returnId, saleItemId])
+}
+
+model SaleExchangeItem {
+  id        Int     @id @default(autoincrement())
+  returnId  Int
+  productId Int
+  quantity  Int
+  price     Decimal @db.Decimal(12, 2)
+  amount    Decimal @db.Decimal(12, 2)
+
+  saleReturn SaleReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([returnId])
+}
+
+model Customer {
+  id Int @id @default(autoincrement())
+
+  name String
+
+  phone String @unique
+
+  createdAt DateTime @default(now())
+
+  sales Sale[]
+}
+
+model BusinessSettings {
+  id           Int      @id @default(autoincrement())
+  businessName String?
+  ownerName    String?
+  phone        String?
+  email        String?
+  address      String?
+  gstNumber    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model POSSettings {
+  id                 Int      @id @default(autoincrement())
+  enableTax          Boolean  @default(true)
+  defaultTaxRate     Float    @default(18)
+  enableDiscount     Boolean  @default(true)
+  defaultDiscount    Float    @default(0)
+  invoicePrefix      String   @default("INV-")
+  startingInvoiceNo  Int      @default(1001)
+  currency           String   @default("INR")
+  allowNegativeStock Boolean  @default(false)
+  requireCustomer    Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model ReceiptSettings {
+  id                  Int      @id @default(autoincrement())
+  showBusinessName    Boolean  @default(true)
+  showGSTNumber       Boolean  @default(true)
+  showCustomerDetails Boolean  @default(true)
+  showCashierName     Boolean  @default(true)
+  showTaxBreakdown    Boolean  @default(true)
+  showDiscount        Boolean  @default(true)
+  receiptSize         String   @default("80mm")
+  footerMessage       String   @default("Thank you for shopping with us!")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
