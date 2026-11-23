@@ -1,4 +1,4 @@
-# 🚀 ResearchPilot AI
+# 🚀 ResearchProject
 
 ### AI-Powered GitHub Repository Analysis & Research Assistant
 
@@ -295,7 +295,7 @@ git push origin feature/your-feature-name
 
 GitHub: [@faizaan-git](https://github.com/faizaan-git)
 
-Project: [ResearchPilot AI](https://github.com/faizaan-git/ResearchProject)
+Project: [ResearchProject](https://github.com/faizaan-git/ResearchProject)
 
 ## 📄 License
 
